@@ -1,0 +1,130 @@
+%variables
+CPU=[1-8]
+FNT={0:Router,1:+Sanity check,2:+Load-Balancer,3:+Flow monitor,4:+DPI}
+NAT_CAPA=1000000
+CHKSUM=false
+
+%script@dut sudo=true
+gdb -ex run -ex "signal 2" -ex bt -batch -args click --dpdk -l 0-$(( $CPU - 1 )) -- ROUTER
+
+%import@client fastclick-replay-single-mt trace=/mnt/traces/kth/morning/morning-quad.pcap LIMIT=1000000
+
+%import graph-beautiful
+
+%file@dut ROUTER
+
+define ($MTU 1500)
+define ($ip 10.0.0.1)
+define ($eth ${dut:0:mac})
+
+elementclass ROUTER { 
+    tol :: Discard(); //ToHost normally
+
+input[0] ->
+            c0 :: Classifier(    12/0806 20/0001,
+                                 12/0806 20/0002,
+                                 12/0800,
+                                 -);
+
+        // Respond to ARP Query
+        c0[0] -> arpress :: ARPResponder($ip $eth);
+        arpress[0] -> Print("ARP QUERY") -> [0]output;
+
+        // Deliver ARP responses to ARP queriers as well as Linux.
+        t :: Tee(2);
+        c0[1] -> t;
+        t[0] -> Print("Input to linux") -> tol; //To linux
+        t[1] -> Print("Arp response") -> [0]output; //Directly output
+
+  
+        // Unknown ethernet type numbers.
+        c0[3] -> Print() -> Discard();
+
+        
+    // An "ARP querier" for each interface.
+    arpq0 :: EtherEncap(0x0800, ${dut:0:mac}, ${client:0:mac});
+    // Connect ARP outputs to the interface queues.
+    arpq0 -> [0]output;
+
+    // IP routing table.
+    rt :: LookupIPRouteMP(   0.0.0.0/0 0);
+
+    // Hand incoming IP packets to the routing table.
+    // CheckIPHeader checks all the lengths and length fields
+    // for sanity.
+    ip ::
+
+    Strip(14)
+    -> CheckIPHeader(CHECKSUM false, VERBOSE false)
+    -> [0]rt;
+
+    oerror :: IPPrint("ICMP Error : DF") -> [0]rt;
+    ttlerror :: IPPrint("ICMP Error : TTL") -> [0]rt;
+    //rederror :: IPPrint("ICMP Error : Redirect") -> [0]rt;
+
+
+    c0[2] -> Paint(1) -> ip;
+    rt[0] -> output0 :: IPOutputCombo(2, 10.1.0.1, $MTU);
+    // DecIPTTL[1] emits packets with expired TTLs.
+    // Reply with ICMPs. Rate-limit them?
+    output0[3] -> ICMPError(10.1.0.1, timeexceeded, SET_FIX_ANNO 0) -> ttlerror;
+    // Send back ICMP UNREACH/NEEDFRAG messages on big packets with DF set.
+    // This makes path mtu discovery work.
+    output0[4] -> ICMPError(10.1.0.1, unreachable, needfrag, SET_FIX_ANNO 0) -> oerror;
+    // Send back ICMP Parameter Problem messages for badly formed
+    // IP options. Should set the code to point to the
+    // bad byte, but that's too hard.
+    output0[2] -> ICMPError(10.1.0.1, parameterproblem, SET_FIX_ANNO 0) -> oerror;
+    // Send back an ICMP redirect if required.
+    output0[1] -> ICMPError(10.1.0.1, redirect, host, SET_FIX_ANNO 0) -> IPPrint("ICMP Error : Redirect") -> arpq0;
+    output0[0]
+    -> arpq0;
+}
+
+elementclass CHECK {
+    [0]
+    -> CheckIPHeader(OFFSET 14, CHECKSUM false)
+    -> ipc :: IPClassifier(tcp,udp,icmp,-);
+
+    ipc[0]
+        -> CheckTCPHeader(CHECKSUM $CHKSUM)
+        -> output;
+
+    ipc[1]
+        -> CheckUDPHeader(CHECKSUM $CHKSUM)
+        -> output;
+
+    ipc[2]
+//        -> CheckICMPHeader()
+        -> output;
+
+    ipc[3]
+        -> output;
+}
+
+elementclass NAT {
+    [0]
+
+$(( "-> FlowIPManagerMP(CAPACITY $NAT_CAPA, LF 1) " if $FNT > 1 else ""))    
+$(( "-> FlowIPLoadBalancer(DST 192.168.1.1, VIP 10.0.0.1) " if $FNT > 1 else ""))
+$(( "-> FlowCounter " if $FNT > 2 else ""))
+$(( "-> FlowHyperScan(ATTACK)" if $FNT > 3 else ""))
+    ->  [0]
+}
+
+fd0 :: FromDPDKDevice(0, MAXTHREADS $CPU , BURST 32, PAUSE none)
+    -> ROUTER()
+$((  " -> CHECK() " if $FNT > 0 else ""))
+    -> NAT()
+    -> ToDPDKDevice(${dut:0:pci}, BLOCKING false)
+
+DriverManager(
+    label loop,
+    read load,
+    wait 1s,
+    gotoa loop,
+);
+
+//Options to make graph a bit more beautiful for the slides
+%config
+var_lim={THROUGHPUT:0-100000000000}

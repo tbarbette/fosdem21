@@ -1,0 +1,9 @@
+%variables
+CPU=[1-8]
+
+%script@dut sudo=true
+click --dpdk -l 0-$(( $CPU - 1 )) -- -e 'FromDPDKDevice(0) -> EtherMirror -> ToDPDKDevice(0);'
+
+%import@client fastclick-replay-single-mt trace=/mnt/traces/kth/morning/morning-quad.pcap
+
+%import graph-beautiful
