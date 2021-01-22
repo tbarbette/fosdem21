@@ -2,6 +2,9 @@
 
 Graphs, experiments and scripts for FOSDEM21 talk
 
+Scripts 00\* are simple FastClick scripts
+
+Scripts 01-05 use NPF (install with pip3 install --user npf) to manage scripts. See [The NPF GitHub page.](http://github.com/tbarbette/npf/)
 
  * 00-forwarder-with-throughput.sh : Run the forwarder presented during the talk with throughput measurement
  * 01-fosdem-fwd.sh : Run the forwarding test based on NPF
