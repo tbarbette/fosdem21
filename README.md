@@ -1,2 +1,11 @@
-# fosdem21
-Graphs, experiments and scripts for FOSDEM21
+# FOSDEM 21 "FastClick and beyond..."
+
+Graphs, experiments and scripts for FOSDEM21 talk
+
+
+ * 00-forwarder-with-throughput.sh : Run the forwarder presented during the talk with throughput measurement
+ * 01-fosdem-fwd.sh : Run the forwarding test based on NPF
+ * 02-fosdem-router.sh : Run the router test based on NPF
+ * 03-fosdem-stuffs.sh : Run the bunch of NFs with NPF
+ * 04-fosdem-history.sh : Re-run FastClick history with the improvement of this and that
+ * 05-fosdem-compare.sh : Compare the performance with VPP & friends
